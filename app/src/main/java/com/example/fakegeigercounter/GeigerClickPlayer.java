@@ -4,20 +4,28 @@ import android.content.Context;
 import android.media.AudioAttributes;
 import android.media.SoundPool;
 import android.os.Handler;
+import android.util.Log;
 
 import java.util.Random;
 
 public class GeigerClickPlayer {
+    private static final String TAG = "GeigerClickPlayer";
+
     private final SoundPool soundPool;
     private final int clickSoundId;
     private final Handler handler = new Handler();
-    private boolean isPlaying = false;
-    private int currentRadLevel = 0;
+    private final Random random = new Random();
 
-    // Intervalli di frequenza (click al secondo)
+    // Parametri di configurazione
     private static final float MIN_FREQ = 0.2f;    // 1 click ogni 5 secondi
-    private static final float MAX_FREQ = 13f;      // 13 click al secondo
-    private static final int MAX_RAD = 1000;        // Valore massimo radiazioni
+    private static final float MAX_FREQ = 13f;     // 13 click al secondo
+    private static final int MAX_RAD = 1000;       // Valore massimo radiazioni
+    private static final float PITCH_VARIATION = 0.2f; // ±10% variazione pitch
+    private static final float VOLUME_VARIATION = 0.15f; // ±15% variazione volume
+
+    private int currentRadLevel = 0;
+    private boolean isEnabled = false;
+    private boolean isPlaying = false;
 
     public GeigerClickPlayer(Context context) {
         AudioAttributes attributes = new AudioAttributes.Builder()
@@ -31,47 +39,92 @@ public class GeigerClickPlayer {
                 .build();
 
         clickSoundId = soundPool.load(context, R.raw.geiger_click, 1);
+
+        soundPool.setOnLoadCompleteListener((soundPool, sampleId, status) -> {
+            if (status != 0) {
+                Log.e(TAG, "Failed to load sound with status: " + status);
+            }
+        });
     }
 
-    public void updateRadiationLevel(int radLevel) {
-        currentRadLevel = Math.min(radLevel, MAX_RAD);
-
-        if (!isPlaying && radLevel > 0) {
-            isPlaying = true;
-            scheduleNextClick();
-        } else if (radLevel == 0) {
-            stop();
+    /**
+     * Abilita o disabilita il player
+     */
+    public void setEnabled(boolean enabled) {
+        this.isEnabled = enabled;
+        if (!enabled) {
+            stopPlayback();
+        } else if (currentRadLevel > 0) {
+            startPlayback();
         }
     }
 
-    private void scheduleNextClick() {
+    /**
+     * Aggiorna il livello di radiazione e regola la riproduzione
+     */
+    public void updateRadiationLevel(int radLevel) {
+        currentRadLevel = Math.min(radLevel, MAX_RAD);
+
+        if (!isEnabled) return;
+
+        if (currentRadLevel > 0 && !isPlaying) {
+            startPlayback();
+        } else if (currentRadLevel == 0 && isPlaying) {
+            stopPlayback();
+        }
+    }
+
+    private void startPlayback() {
+        if (isPlaying) return;
+
+        isPlaying = true;
+        scheduleNextClick();
+        Log.d(TAG, "Playback started");
+    }
+
+    private void stopPlayback() {
         if (!isPlaying) return;
 
-        // Applica una curva esponenziale per maggiore realismo
+        handler.removeCallbacksAndMessages(null);
+        isPlaying = false;
+        Log.d(TAG, "Playback stopped");
+    }
+
+    private void scheduleNextClick() {
+        if (!isPlaying || !isEnabled || currentRadLevel <= 0) return;
+
+        // Calcola frequenza con curva esponenziale
         float normalized = currentRadLevel / (float)MAX_RAD;
-        float frequency = MIN_FREQ + (MAX_FREQ - MIN_FREQ) * (float)Math.pow(normalized, 2.5);
+        float baseFrequency = MIN_FREQ + (MAX_FREQ - MIN_FREQ) * (float)Math.pow(normalized, 2.5);
 
-        // Aggiungi piccola variazione casuale (±10%)
-        float variedFreq = frequency * (0.9f + 0.2f * new Random().nextFloat());
-
+        // Aggiungi variazione casuale
+        float variedFreq = baseFrequency * (0.9f + 0.2f * random.nextFloat());
         long delayMillis = (long) (1000 / variedFreq);
 
         handler.postDelayed(() -> {
-            // Modifica leggermente il pitch per maggiore realismo
-            float pitch = 1.0f + (new Random().nextFloat() * 0.2f - 0.1f);
-            soundPool.play(clickSoundId, 1f, 1f, 1, 0, pitch);
+            if (!isPlaying || !isEnabled) return;
 
+            playClickSound();
             scheduleNextClick();
         }, delayMillis);
     }
 
+    private void playClickSound() {
+        // Variazioni casuali per maggiore realismo
+        float pitch = 1.0f + (random.nextFloat() * 2 * PITCH_VARIATION - PITCH_VARIATION);
+        float volume = 1.0f - (random.nextFloat() * VOLUME_VARIATION);
+
+        soundPool.play(clickSoundId, volume, volume, 1, 0, pitch);
+    }
+
     public void stop() {
-        isPlaying = false;
-        handler.removeCallbacksAndMessages(null);
+        setEnabled(false);
     }
 
     public void release() {
         stop();
         soundPool.release();
+        handler.removeCallbacksAndMessages(null);
+        Log.d(TAG, "Resources released");
     }
 }

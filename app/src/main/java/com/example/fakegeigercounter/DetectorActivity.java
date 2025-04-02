@@ -9,12 +9,12 @@ import android.bluetooth.BluetoothManager;
 import android.bluetooth.BluetoothProfile;
 import android.content.Context;
 import android.content.pm.PackageManager;
-import android.media.SoundPool;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.util.Log;
-import android.widget.LinearLayout;
+import android.view.View;
+import android.widget.Button;
 import android.widget.RelativeLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -29,42 +29,38 @@ import java.util.List;
 
 public class DetectorActivity extends AppCompatActivity {
 
-    private static final int REQUEST_LOCATION_PERMISSION = 1;
-    private static final int REQUEST_PERMISSIONS = 2;
+    private static final int REQUEST_PERMISSIONS = 1;
 
     private BluetoothAdapter bluetoothAdapter;
     private BluetoothGatt bluetoothGatt;
     private TextView tvRadiationValue;
-    private TextView tvRadiationUnit;
     private TextView tvRadiationLevel;
     private TextView tvConnectionStatus;
-    private LinearLayout radiationContainer;
+    private Button btnStart;
     private RelativeLayout bg;
+
     private final Handler handler = new Handler();
     private GeigerClickPlayer geigerPlayer;
-    private final Handler updatesHandler = new Handler();
+    private RadiationCalculator radiationCalculator = new RadiationCalculator();
 
-
-    private final RadiationCalculator radiationCalculator = new RadiationCalculator();
+    private boolean isGeigerActive = false;
+    private String deviceAddress;
 
     private final BluetoothGattCallback gattCallback = new BluetoothGattCallback() {
         @Override
         public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 runOnUiThread(() -> {
-                    if (ActivityCompat.checkSelfPermission(DetectorActivity.this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-                        tvConnectionStatus.setText("Connesso");
-                    } else {
-                        checkPermissions();
+                    tvConnectionStatus.setText(isGeigerActive ? "Contatore attivo" : "Connesso (in pausa)");
+                    if (isGeigerActive) {
+                        startRssiUpdates();
                     }
                 });
-                handler.post(rssiUpdater);
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 runOnUiThread(() -> {
                     tvConnectionStatus.setText("Disconnesso");
-                    tvRadiationLevel.setText("-- μSv/h");
+                    stopGeigerCounter();
                 });
-                handler.removeCallbacks(rssiUpdater);
             }
         }
 
@@ -73,8 +69,6 @@ public class DetectorActivity extends AppCompatActivity {
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 radiationCalculator.updateRssi(rssi);
                 updateRadiationLevel();
-            } else {
-                Log.e("BLE_RSSI", "Errore lettura RSSI: " + status);
             }
         }
     };
@@ -82,48 +76,136 @@ public class DetectorActivity extends AppCompatActivity {
     private final Runnable rssiUpdater = new Runnable() {
         @Override
         public void run() {
-            if (bluetoothGatt != null) {
-                if (ActivityCompat.checkSelfPermission(DetectorActivity.this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+            if (bluetoothGatt != null && isGeigerActive) {
+                if (ActivityCompat.checkSelfPermission(DetectorActivity.this,
+                        Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
                     bluetoothGatt.readRemoteRssi();
                 }
             }
             handler.postDelayed(this, 1000);
         }
     };
-    private String deviceAddress;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_detector);
 
-        deviceAddress = getIntent().getStringExtra("DEVICE_ADDRESS");
+        // Inizializzazione UI
+        initViews();
 
-        // Inizializza UI
-        bg = findViewById(R.id.det_act);
-        tvRadiationValue = findViewById(R.id.tv_radiation_value);
-        tvRadiationUnit = findViewById(R.id.tv_radiation_unit);
-        tvRadiationLevel = findViewById(R.id.tv_radiation_level);
-        tvConnectionStatus = findViewById(R.id.tv_connection_status);
-        radiationContainer = findViewById(R.id.radiationContainer);
+        // Ottieni indirizzo dispositivo dal Intent
+        deviceAddress = getIntent().getStringExtra("DEVICE_ADDRESS");
 
         // Inizializza Bluetooth
         BluetoothManager bluetoothManager = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
         bluetoothAdapter = bluetoothManager.getAdapter();
 
-        // Verifica se il dispositivo supporta Bluetooth
-        if (bluetoothAdapter == null) {
-            tvConnectionStatus.setText("Bluetooth non supportato");
+        // Inizializza SoundPool
+        geigerPlayer = new GeigerClickPlayer(this);
+
+        // Verifica permessi e connetti
+        if (checkPermissions()) {
+            connectToDevice();
+        }
+    }
+
+    private void initViews() {
+        tvRadiationValue = findViewById(R.id.tv_radiation_value);
+        tvRadiationLevel = findViewById(R.id.tv_radiation_level);
+        tvConnectionStatus = findViewById(R.id.tv_connection_status);
+        btnStart = findViewById(R.id.btn_start);
+        bg = findViewById(R.id.det_act);
+
+        btnStart.setOnClickListener(v -> toggleGeigerCounter());
+    }
+
+    public void toggleGeigerCounter() {
+        isGeigerActive = !isGeigerActive;
+
+        if (isGeigerActive) {
+            startGeigerCounter();
+        } else {
+            stopGeigerCounter();
+        }
+        updateButtonState();
+    }
+
+    private void startGeigerCounter() {
+        if (bluetoothGatt == null) {
+            connectToDevice();
             return;
         }
 
-        // Configura SoundPool per il suono Geiger
-        geigerPlayer = new GeigerClickPlayer(this);
-
-        checkPermissions();
+        startRssiUpdates();
+        geigerPlayer.setEnabled(true);
+        tvConnectionStatus.setText("Contatore attivo");
     }
 
-    private void checkPermissions() {
+    private void stopGeigerCounter() {
+        handler.removeCallbacks(rssiUpdater);
+        geigerPlayer.setEnabled(false);
+        tvConnectionStatus.setText("Connesso (in pausa)");
+        resetRadiationDisplay();
+    }
+
+    private void startRssiUpdates() {
+        handler.post(rssiUpdater);
+    }
+
+    private void updateButtonState() {
+        btnStart.setText(isGeigerActive ? "FERMA CONTATORE" : "AVVIA CONTATORE");
+    }
+
+    private void resetRadiationDisplay() {
+        tvRadiationValue.setText("--");
+        tvRadiationLevel.setText("-- μSv/h");
+        bg.setBackgroundColor(ContextCompat.getColor(this, R.color.radiation_background_normal));
+    }
+
+    private void updateRadiationLevel() {
+        if (!isGeigerActive) return;
+
+        int radiation = radiationCalculator.calculateRadiation();
+        geigerPlayer.updateRadiationLevel(radiation);
+
+        String levelName;
+        int color;
+
+        if (radiation <= 50) {
+            levelName = "Aria Vault";
+            color = R.color.radiation_background_normal;
+        } else if (radiation <= 150) {
+            levelName = "Polvere Glow";
+            color = R.color.radiation_background_light;
+        } else if (radiation <= 300) {
+            levelName = "Zona Gialla";
+            color =  R.color.radiation_background_moderate;
+        } else if (radiation <= 500) {
+            levelName = "Sangue Verde";
+            color =  R.color.radiation_background_high;
+        } else if (radiation <= 700) {
+            levelName = "Ghoul Ferale";
+            color =  R.color.radiation_background_danger;
+        } else if (radiation <= 850) {
+            levelName = "Scorie Dirette";
+            color =  R.color.radiation_background_emergency;
+        } else if (radiation <= 950) {
+            levelName = "Cuore FEV";
+            color =  R.color.radiation_background_critical;
+        } else {
+            levelName = "Liberty Prime";
+            color =  R.color.radiation_background_lethal;
+        }
+
+        runOnUiThread(() -> {
+            tvRadiationValue.setText(String.valueOf(radiation));
+            tvRadiationLevel.setText(levelName);
+            bg.setBackgroundColor(ContextCompat.getColor(this, color));
+        });
+    }
+
+    private boolean checkPermissions() {
         List<String> permissionsNeeded = new ArrayList<>();
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
@@ -146,87 +228,48 @@ public class DetectorActivity extends AppCompatActivity {
             ActivityCompat.requestPermissions(this,
                     permissionsNeeded.toArray(new String[0]),
                     REQUEST_PERMISSIONS);
-        } else {
-            connectToTargetDevice();
+            return false;
         }
+        return true;
     }
 
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == REQUEST_LOCATION_PERMISSION) {
+        if (requestCode == REQUEST_PERMISSIONS) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                connectToTargetDevice();
+                connectToDevice();
             } else {
-                Toast.makeText(this, "Permesso negato", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Permessi necessari per funzionare", Toast.LENGTH_SHORT).show();
             }
         }
     }
 
-    private void connectToTargetDevice() {
-        BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
-        BluetoothDevice targetDevice = adapter.getRemoteDevice(deviceAddress);
-
-        if (targetDevice == null) {
+    private void connectToDevice() {
+        if (deviceAddress == null) {
             Toast.makeText(this, "Dispositivo non valido", Toast.LENGTH_SHORT).show();
+            finish();
+            return;
+        }
+
+        BluetoothDevice device = bluetoothAdapter.getRemoteDevice(deviceAddress);
+        if (device == null) {
+            Toast.makeText(this, "Dispositivo non trovato", Toast.LENGTH_SHORT).show();
             return;
         }
 
         tvConnectionStatus.setText("Connessione in corso...");
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-            bluetoothGatt = targetDevice.connectGatt(this, false, gattCallback);
-        } else {
-            checkPermissions();
+            bluetoothGatt = device.connectGatt(this, false, gattCallback);
         }
-    }
-
-    private void updateRadiationLevel() {
-        int radiation = radiationCalculator.calculateRadiation();
-        geigerPlayer.updateRadiationLevel(radiation);
-        String levelName;
-        int color;
-
-        // Assegna nome livello e colore in base al valore
-        if (radiation <= 50) {
-            levelName = "Aria Vault";
-            color = ContextCompat.getColor(this, R.color.radiation_background_normal);
-        } else if (radiation <= 150) {
-            levelName = "Polvere Glow";
-            color = ContextCompat.getColor(this, R.color.radiation_background_light);
-        } else if (radiation <= 300) {
-            levelName = "Zona Gialla";
-            color = ContextCompat.getColor(this, R.color.radiation_background_moderate);
-        } else if (radiation <= 500) {
-            levelName = "Sangue Verde";
-            color = ContextCompat.getColor(this, R.color.radiation_background_high);
-        } else if (radiation <= 700) {
-            levelName = "Ghoul Ferale";
-            color = ContextCompat.getColor(this, R.color.radiation_background_danger);
-        } else if (radiation <= 850) {
-            levelName = "Scorie Dirette";
-            color = ContextCompat.getColor(this, R.color.radiation_background_emergency);
-        } else if (radiation <= 950) {
-            levelName = "Cuore FEV";
-            color = ContextCompat.getColor(this, R.color.radiation_background_critical);
-        } else {
-            levelName = "Liberty Prime";
-            color = ContextCompat.getColor(this, R.color.radiation_background_lethal);
-        }
-
-        runOnUiThread(() -> {
-            // Aggiorna le nuove View separate
-            tvRadiationValue.setText(String.valueOf(radiation));
-            tvRadiationLevel.setText(levelName);
-
-            // Imposta colore sfondo
-            bg.setBackgroundColor(color);
-        });
     }
 
     @Override
     protected void onPause() {
         super.onPause();
-        geigerPlayer.stop(); // Ferma i click quando l'app è in pausa
+        if (isGeigerActive) {
+            stopGeigerCounter();
+        }
     }
 
     @Override
@@ -234,14 +277,13 @@ public class DetectorActivity extends AppCompatActivity {
         super.onDestroy();
         handler.removeCallbacks(rssiUpdater);
         geigerPlayer.release();
-        updatesHandler.removeCallbacksAndMessages(null);
+
         if (bluetoothGatt != null) {
             if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
                 bluetoothGatt.disconnect();
                 bluetoothGatt.close();
-            } else {
-                checkPermissions();
             }
+            bluetoothGatt = null;
         }
     }
 }

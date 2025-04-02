@@ -14,11 +14,16 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.util.Log;
 import android.widget.Button;
+
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import java.util.ArrayList;
 import java.util.List;
 import android.content.Intent;
+import android.widget.Toast;
 
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
@@ -27,6 +32,7 @@ import androidx.recyclerview.widget.RecyclerView;
 
 public class MainActivity extends AppCompatActivity {
     private BluetoothAdapter bluetoothAdapter;
+    private ActivityResultLauncher<Intent> bluetoothLauncher;
     private RecyclerView devicesRecyclerView;
     private BluetoothDeviceAdapter adapter;
     private BluetoothLeScanner bluetoothLeScanner;
@@ -48,6 +54,10 @@ public class MainActivity extends AppCompatActivity {
         // Verifica permessi
         checkPermissions();
 
+        // Pulsante scansione
+        Button scanButton = findViewById(R.id.scanButton);
+        scanButton.setOnClickListener(v -> toggleScan());
+
         // Setup RecyclerView
         devicesRecyclerView = findViewById(R.id.devicesRecyclerView);
         devicesRecyclerView.setLayoutManager(new LinearLayoutManager(this));
@@ -63,12 +73,38 @@ public class MainActivity extends AppCompatActivity {
         // Ottieni BluetoothAdapter
         final BluetoothManager bluetoothManager = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
         bluetoothAdapter = bluetoothManager.getAdapter();
+        if (bluetoothAdapter == null) {
+            // Il dispositivo non supporta il Bluetooth
+            Toast.makeText(this, "Bluetooth non supportato su questo dispositivo", Toast.LENGTH_LONG);
+        }
 
-        // Pulsante scansione
-        Button scanButton = findViewById(R.id.scanButton);
-        scanButton.setOnClickListener(v -> toggleScan());
+        bluetoothLauncher = registerForActivityResult(
+                new ActivityResultContracts.StartActivityForResult(),
+                result -> {
+                    if (result.getResultCode() == RESULT_OK) {
+                        Log.d("Bluetooth", "Bluetooth attivato dall'utente");
+                    } else {
+                        Log.d("Bluetooth", "Bluetooth non attivato");
+                    }
+                });
+
+        checkBluetoothStatus();
     }
 
+    private void checkBluetoothStatus() {
+        if (bluetoothAdapter == null) {
+            Log.e("Bluetooth", "Dispositivo non supportato");
+            return;
+        }
+
+        if (bluetoothAdapter.isEnabled()) {
+            Log.d("Bluetooth", "Bluetooth già attivo");
+        } else {
+            // Richiedi l'attivazione del Bluetooth
+            Intent enableBtIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
+            bluetoothLauncher.launch(enableBtIntent);
+        }
+    }
     private void toggleScan() {
         if (scanning) {
             stopScan();

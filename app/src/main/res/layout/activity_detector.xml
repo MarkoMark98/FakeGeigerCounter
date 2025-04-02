@@ -44,6 +44,15 @@
             android:text="NORMALE"
             android:textColor="@color/white"
             android:layout_marginTop="16dp"/>
+
+        <Button
+            android:id="@+id/btn_start"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10sp"
+            android:textSize="20sp"
+            android:text="Attiva"
+            android:textColor="@color/white"/>
     </LinearLayout>
 
     <!-- Stato connessione in basso a sinistra -->
