@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    <!-- Scala di radiazioni -->
+    <color name="radiation_background_normal">#4CAF50</color>    <!-- Verde -->
+    <color name="radiation_background_light">#26A69A</color>     <!-- Verde acqua -->
+    <color name="radiation_background_moderate">#FFC107</color>  <!-- Giallo -->
+    <color name="radiation_background_high">#FF9800</color>      <!-- Arancione -->
+    <color name="radiation_background_danger">#F44336</color>    <!-- Rosso -->
+    <color name="radiation_background_emergency">#D32F2F</color> <!-- Rosso scuro -->
+    <color name="radiation_background_critical">#7B1FA2</color>  <!-- Viola -->
+    <color name="radiation_background_lethal">#000000</color>    <!-- Nero -->
+</resources>
